@@ -1,0 +1,162 @@
+---
+title: "PopGen Archaic Admixture"
+author: "SoerenJoergensen"
+date: "2024-05-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 12)
+```
+
+```{r}
+library(tidyverse)
+library(cowplot)
+theme_set(theme_bw(base_size = 12))
+```
+
+
+
+# First, I load the data and explore
+
+```{r}
+df <- read_tsv("ArchaicAdmixture/ArchaicSegments.txt")
+head(df) %>% knitr::kable()
+# summary(df)
+```
+
+> How many individuals do we have?
+
+```{r}
+length(unique(df$name))
+```
+
+> How many populations?
+
+```{r}
+length(unique(df$pop))
+```
+
+> What regions do we have?
+
+```{r}
+unique(df$region)
+```
+
+## Make a plot of the average archaic segment length (by population) 
+
+```{r}
+
+mean_seg_pop <- df %>% 
+  group_by(pop, region) %>% 
+  summarise(`Mean length` = mean(length))
+head(mean_seg_pop)
+
+mean_seg_pop %>% 
+  ungroup() %>% 
+  arrange(region) %>% 
+  mutate(pop = factor(pop, pop)) %>% 
+  ggplot(aes(x = pop, y = `Mean length`, fill = region)) +
+  geom_bar(position="dodge", stat="identity") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=9))
+
+```
+
+> Who has the highest mean segment length?
+
+```{r}
+mean_seg_pop[which.max(mean_seg_pop$`Mean length`),]
+```
+
+> Average length of segments by region?
+
+```{r, fig.height=3, fig.width=8}
+mean_seg_reg <- df %>% 
+  group_by(region) %>% 
+  summarise(`Mean length` = mean(length))
+
+mean_seg_reg %>% 
+  ggplot(aes(x = region, y = `Mean length`)) +
+  geom_col() +
+  coord_flip()
+  
+```
+
+### Q1: what is the total length of archaic segments in each individual
+
+```{r}
+total_seg_ind <- df %>% 
+  group_by(name, pop, region) %>% 
+  summarise(total_length = sum(length))
+
+total_seg_ind %>% 
+  arrange(total_length) %>% 
+  ggplot(aes(x=total_length, fill=region)) +
+  geom_histogram(bins=100)
+```
+
+### Q2: summarise per region and population
+
+```{r}
+total_seg_ind %>% 
+  group_by(region, pop) %>% 
+  summarise(mean_total_length = mean(total_length)) %>% 
+  ungroup() %>% 
+  arrange(region) %>% 
+  mutate(pop = factor(pop,pop)) %>% 
+  ggplot(aes(x=pop, y=mean_total_length, fill=region)) +
+  geom_bar(position='dodge', stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+### Q3: Who has the most archaic ancestry? Why?
+
+* Papuans have the most (Melanesia)
+
+```{r}
+df %>% 
+  pivot_longer(
+    cols = starts_with("Shared_with_"),  # Pivot the shared columns
+    names_to = "shared_with",  # Create a new column for group information
+    values_to = "count"  # Create a new column for the y-values
+  ) %>% 
+  ggplot(aes(x=region, y=count, fill=shared_with)) +
+  geom_bar(stat='identity', position='dodge')
+
+```
+
+### Q4: What is the length distribution of fragments for the five different regions (hint: you can use facet_grid to plot all at once)
+
+#### Should I filter out negative values? 
+
+```{r}
+df %>% 
+  filter(length>0) %>% 
+  ggplot(aes(length)) +
+  geom_histogram(bins=30) +
+  facet_wrap(~region, nrow=1) +
+  xlim(0,1e+6) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle=90,hjust=1)
+  ) +
+  NULL
+
+```
+
+```{r}
+
+
+df %>%
+  filter(length>0) %>% 
+  group_by(region) %>%
+  ggplot(aes(y=length,x=region)) + 
+  theme_bw() +
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+
+
+
