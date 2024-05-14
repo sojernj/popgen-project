@@ -9,21 +9,28 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, fig.width = 12)
 ```
 
-```{r}
+```{r setup II}
 library(tidyverse)
 library(cowplot)
 theme_set(theme_bw(base_size = 12))
+setwd("~/Documents/git/popgen-project/")
 ```
 
 
 
 # First, I load the data and explore
 
-```{r}
-df <- read_tsv("ArchaicAdmixture/ArchaicSegments.txt")
+* By info from Moi, lengths have to be recalculated. They should be: end-start+1000
+
+```{r load data}
+df <- read_tsv("ArchaicAdmixture/ArchaicSegments.txt") %>% 
+  mutate(length = end-start+1000) %>% 
+  filter(length>0)
+
 head(df) %>% knitr::kable()
-# summary(df)
+summary(df)
 ```
+
 
 > How many individuals do we have?
 
@@ -45,7 +52,7 @@ unique(df$region)
 
 ## Make a plot of the average archaic segment length (by population) 
 
-```{r}
+```{r avg archaic segment length}
 
 mean_seg_pop <- df %>% 
   group_by(pop, region) %>% 
@@ -71,7 +78,7 @@ mean_seg_pop[which.max(mean_seg_pop$`Mean length`),]
 
 > Average length of segments by region?
 
-```{r, fig.height=3, fig.width=8}
+```{r avg length by region, fig.height=3, fig.width=8}
 mean_seg_reg <- df %>% 
   group_by(region) %>% 
   summarise(`Mean length` = mean(length))
@@ -85,7 +92,7 @@ mean_seg_reg %>%
 
 ### Q1: what is the total length of archaic segments in each individual
 
-```{r}
+```{r Q1: what is the total length of archaic segments in each individual}
 total_seg_ind <- df %>% 
   group_by(name, pop, region) %>% 
   summarise(total_length = sum(length))
@@ -98,7 +105,7 @@ total_seg_ind %>%
 
 ### Q2: summarise per region and population
 
-```{r}
+```{r Q2: summarise per region and population}
 total_seg_ind %>% 
   group_by(region, pop) %>% 
   summarise(mean_total_length = mean(total_length)) %>% 
@@ -114,7 +121,7 @@ total_seg_ind %>%
 
 * Papuans have the most (Melanesia)
 
-```{r}
+```{r Q3: Who has the most archaic ancestry? Why?}
 df %>% 
   pivot_longer(
     cols = starts_with("Shared_with_"),  # Pivot the shared columns
@@ -128,11 +135,8 @@ df %>%
 
 ### Q4: What is the length distribution of fragments for the five different regions (hint: you can use facet_grid to plot all at once)
 
-#### Should I filter out negative values? 
-
-```{r}
+```{r Q4: What is the length distribution of fragments for the five different regions}
 df %>% 
-  filter(length>0) %>% 
   ggplot(aes(length)) +
   geom_histogram(bins=30) +
   facet_wrap(~region, nrow=1) +
@@ -145,11 +149,9 @@ df %>%
 
 ```
 
-```{r}
-
+```{r Boxplot: length distribution}
 
 df %>%
-  filter(length>0) %>% 
   group_by(region) %>%
   ggplot(aes(y=length,x=region)) + 
   theme_bw() +
@@ -157,6 +159,335 @@ df %>%
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
 
+### Q5: What is the average length of segments by population and region sorted
+
+```{r Q5: What is the average length of segments by population and region sorted}
+
+mean_seg_pop %>% 
+  ungroup() %>% 
+  arrange(region) %>% 
+  mutate(pop = factor(pop, pop)) %>% 
+  ggplot(aes(x = pop, y = `Mean length`, fill = region)) +
+  geom_bar(position="dodge", stat="identity") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=9))
+
+```
+
+### Q6: What can cause different mean fragment lengths?
+
+> Differences in recombination rate, more than one wave of introgression in one of the regions. Recent gene flow/introgression from denisovans/neanderthal after migration out of Africa. Generation time.
+
+## Origin of fragments
+
+```{r Explore: Origin of fragments}
+snps <- read_tsv("ArchaicAdmixture/SNPs.txt")
+head(snps)
+unique(snps$archaic)
+unique(snps$Denis)
+nrow(snps)
+```
+
+
+### Q1: For each individual, assign the archaic segments to origin and reconstruct a Figure in the same style as Figure 5 of the Cell paper
+
+```{r assign archaic segments to origin, fig.height=8}
+df <- df %>%
+  mutate(origin = case_when(
+        Shared_with_Altai > Shared_with_Denisova | Shared_with_Vindija > Shared_with_Denisova ~ "Neanderthal",
+        Shared_with_Altai < Shared_with_Denisova & Shared_with_Vindija < Shared_with_Denisova ~ "Denisovan",
+        Shared_with_Altai + Shared_with_Vindija + Shared_with_Denisova == 0 ~ "Unclassified"
+    ))
+
+
+df %>% 
+  group_by(name, origin, pop) %>% 
+  summarise(total = sum(length)) %>% 
+  ungroup() %>% 
+  group_by(pop, origin) %>% 
+  summarise(mean_seqs = mean(total)) %>% 
+  ungroup() %>% 
+  mutate(origin = factor(origin, c("Denisovan", "Unclassified", "Neanderthal"))) %>%
+  ggplot(aes(x=pop, y=mean_seqs*10^-6, fill=origin)) +
+  geom_bar(stat='identity') +
+  coord_flip() +
+  ylab("Mean detected archaic sequence per region (Mb)") +
+  theme(axis.text.x = element_text(angle=90, hjust=1))
+  
+
+```
+
+### Q2. What are major differences? What can explain these differences?
+
+> There are a lot more archaic proportions on Papuans, especially from Denisovans. Differences in proportions and lengths between methods.
+
+### Q3: Summarize the results by averaging over region and plot these.
+
+```{r Q3: Summarize the results by averaging over region and plot these.}
+
+df %>% 
+  group_by(name, origin, region) %>% 
+  summarise(total = sum(length)) %>%
+  ungroup() %>% 
+  group_by(region, origin) %>% 
+  summarise(mean_seqs = mean(total)) %>% 
+  ungroup() %>% 
+  mutate(origin = factor(origin, c("Denisovan", "Unclassified", "Neanderthal"))) %>%
+  ggplot(aes(x=region, y=mean_seqs*10^-6, fill=origin)) +
+  geom_bar(stat='identity') +
+  coord_flip() +
+  ylab("Mean detected archaic sequence per region (Mb)") +
+  theme(axis.text.x = element_text(angle=90, hjust=1))
+
+```
+
+
+## Q6. Determine the fragment length distribution of segment of Neanderthal and Denisova origin separately for each region. Compare the median of the distributions.
+
+```{r Q6: fragment length dist of archaic origin per region and compare distributions}
+medians <- df %>% 
+  filter(origin %in% c("Denisovan", "Neanderthal")) %>% 
+  group_by(region, origin) %>% 
+  summarise(median_length = (median(length)),
+            count=n(),
+            nsamples = length(unique(name)))
+
+df %>% filter(origin %in% c("Denisovan", "Neanderthal")) %>% 
+  ggplot(aes(x=length, fill=origin)) +
+  geom_density(alpha=0.2) +
+  #geom_vline(aes(xintercept = median(length), color = origin)) +
+  geom_vline(data=medians, aes(xintercept=median_length, color=origin)) +
+  facet_wrap(~region, nrow=1) +
+  scale_fill_manual(values = c("red", "blue")) + 
+  xlim(0, 1e6) +
+  theme(axis.text.x = element_text(angle = 90, hjust=1))
+
+medians %>% knitr::kable()
+```
+
+### Do the quantiles
+
+```{r Fragment length dist: calculate quantiles}
+quantile((df %>% 
+         filter(origin %in% c("Neanderthal","Denisovan")))$length)
+
+quantile((df %>% 
+         filter(origin %in% c("Neanderthal","Denisovan")) %>%
+         mutate(total_snps = Shared_with_Altai + Shared_with_Denisova + Shared_with_Vindija))$total_snps)
+
+# Use the quantiles (median) as the threshold
+
+df %>%
+    filter(origin %in% c("Neanderthal","Denisovan")) %>%
+    mutate(total_snps = Shared_with_Altai + Shared_with_Denisova + Shared_with_Vindija) %>%
+    filter(total_snps > 19) %>%
+    ggplot() +
+    geom_density(aes(length, fill=origin), color=NA,alpha=0.5) +
+    theme_bw() + 
+    facet_grid(~region) +
+    xlim(0,2000000) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+```{r Denisovan fragment length per region}
+df %>% 
+    filter(origin %in% c("Neanderthal","Denisovan")) %>%
+    mutate(total_snps = Shared_with_Altai + Shared_with_Denisova + Shared_with_Vindija) %>%
+    filter(total_snps > 50) %>%
+    ggplot(aes(x=origin,y=length)) +
+        geom_boxplot() +
+        ggtitle('Denisovan fragment length per region') +
+        theme_bw() + 
+        facet_grid(~region) +
+        scale_x_discrete() +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+### What about the distribution of unclassified snps
+
+```{r Distribution of unclasified snps, fig.height=10}
+df  %>%
+    filter(origin == "Neanderthal") %>%
+    group_by(region) %>%
+    ggplot(aes(length)) +
+        geom_histogram(bins = 50) +
+        ggtitle('Neanderthal fragment length per region') +
+        theme_bw() + facet_grid(~region) +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1)) -> plot1
+
+df  %>%
+    filter(origin == "Denisovan") %>%
+    ggplot(aes(length)) +
+        geom_histogram(bins = 50) +
+        ggtitle('Denisovan fragment length per region') +
+        theme_bw() + facet_grid(~region)  +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1)) -> plot2
+
+df  %>%
+    filter(origin == "Unclassified") %>%
+    group_by(region) %>%
+    ggplot(aes(length)) +
+        geom_histogram(bins = 50) +
+        ggtitle('Unclassified fragment length per region') +
+        theme_bw() + facet_grid(~region) +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1)) -> plot3
+
+plot_grid(plot1, plot2, plot3, ncol=1)
+
+```
+
+## Comparison of chromosomes
+
+### Q1. Determine the amount of archaic introgression on each chromosome for each of the five regions.
+
+
+```{r archaic introgression per chromosome per region}
+
+df  %>%
+    group_by(chrom, region) %>%
+    summarise(Frequency = sum(as.numeric(length))) %>%
+    ggplot(aes(x = chrom, y = Frequency, fill = region)) +  
+    geom_bar(position = "dodge", stat="identity") +
+    theme_bw() +
+    scale_x_discrete(limits= c(seq(1, 22, 1),'X')) + # ordering from 1 to 22 +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+### Q2. Repeat this with assignment of regions to archaic species.
+
+```{r Q2. Repeat this with assignment of regions to archaic species.}
+df  %>%
+    group_by(chrom, origin) %>%
+    summarise(Frequency = sum(as.numeric(length))) %>%
+    ggplot(aes(x = chrom, y = Frequency, fill = origin)) +  
+        geom_bar(position = "dodge", stat="identity") +
+        theme_bw() +
+        scale_x_discrete(limits= c(seq(1, 22, 1),'X')) + # ordering from 1 to 22
+        theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+### Q3. Combine the Neanderthal fragments for all individuals and plot all the fragments on top of each other along chromosomes (hint use alpha = 0.1). Can you find “deserts” of archaic admixture and/or evidence for places where Neanderthal ancestry has reached very high frequency?
+
+```{r Q3. Combine the Neanderthal fragments for all individuals}
+
+chrom <- factor(c(1:22, 'X'), levels=c(1:22,'X'))
+chrom_len <- c(2.50e+08, 2.45e+08, 1.98e+08, 1.95e+08, 1.82e+08, 
+               1.71e+08, 1.60e+08, 1.47e+08, 1.42e+08, 1.36e+08, 
+               1.35e+08, 1.35e+08, 1.16e+08, 1.08e+08, 1.03e+08, 
+               9.03e+07, 8.33e+07, 8.04e+07, 6.00e+07, 6.44e+07, 
+               4.90e+07, 5.15e+07, 1.55e+08)
+
+
+df %>%
+  mutate(chrom = factor(chrom, levels = c(1:22, 'X'))) %>% 
+  arrange(region) %>%
+  ggplot() +
+  theme_bw() + 
+  geom_segment(aes(x=start,xend=end,y=0, yend=1, col=origin), alpha=0.02) + 
+  geom_blank() +
+  geom_rect(data=tibble(chrom, chrom_len), aes(xmin=chrom_len, xmax=Inf, ymin=0, ymax=1), fill="grey") +
+  scale_x_continuous(expand=c(0,0)) +
+  scale_y_continuous(expand=c(0,0)) +
+  facet_wrap(~chrom) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),  
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.y=element_blank(),
+        legend.position="none") +
+  xlab("Position")
+```
+
+### Q4. You will find that the X chromosome is an outlier (compare to a chormosome of a similar size - chr8). How and why?
+
+```{r Compare 8 and X}
+
+# Histogram
+df %>% 
+  group_by(chrom, region) %>% 
+  filter(chrom %in% c('8', 'X')) %>% 
+  summarise(Frequency = sum(as.numeric(length))) %>% 
+  ggplot(aes(x = chrom, y=Frequency, fill = region)) +
+  geom_bar(position='dodge', stat='identity') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=90, hjust=1)) 
+
+# Boxplot
+df %>%
+  group_by(chrom, region) %>%
+  filter(chrom %in% c('8', 'X')) %>%
+  summarise(Frequency = sum(as.numeric(length))) %>%
+  ggplot(aes(x = chrom, y = Frequency)) +  
+  geom_boxplot() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+* There are much less archaic SNPS on X chromosome, possibly due to sexual antagonistic influence, or hybrid incompatibility ??
+
+## Q6. Do you find regions that are devoid of introgression for both the Neanderthal and the Denisovan admixture events?
+
+Let us look at the EPAS1 as an example of adaptive introgression. This gene maps to chr2:46,520,806-46,613,842 in GRCh37 coordinates. 
+Tibetan individuals have an increased amount of archaic polymorphism in this region.
+
+```{r}
+df %>% 
+  filter(origin %in% c("Neanderthal", "Denisovan")) %>% 
+  filter(chrom == 2 & region == 'EastAsia' & start > 4.65e+07 & end < 4.67e+07) %>% 
+  ggplot(aes(x=length, fill=origin)) +
+  geom_histogram(bins=50) +
+  facet_wrap(~country, nrow = 1) +
+  theme(axis.text.x = element_text(angle=90, hjust=1))
+```
+
+
+Contrary, FOXP2 is an example of maladaptive introgression, consistent with the presence of deserts of archaic origin in around this gene.
+
+```{r}
+df %>%
+  filter(chrom == "7") %>%
+  arrange(region) %>%
+  ggplot() +
+  theme_bw() + 
+  geom_segment(aes(x=start,xend=end,y=0, yend=1, col=origin), alpha=0.02) + 
+  facet_wrap(~region, ncol=1) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),  
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.y=element_blank(),
+        legend.position="none") +
+  geom_vline(xintercept = 113726365, alpha=0.5) +
+  xlab("Position") + 
+  ggtitle(paste("Chromosome 7")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## The end
