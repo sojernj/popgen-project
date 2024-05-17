@@ -1,0 +1,363 @@
+---
+title: "archaic_admixture"
+author: "SoerenJoergensen"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 14, fig.height = 5)
+library(tidyverse)
+library(cowplot)
+library(knitr)
+theme_set(theme_bw(base_size = 12))
+#setwd("~/Documents/git/popgen-project/")
+```
+
+## Project Plan for Exploring Non-African Archaic Segments
+
+### 1. Data Exploration and Preprocessing
+
+Load and preprocess the data files. We have to recalculate the lengths of the segments (VIP knowledge from Moi)
+
+```{r data-exploration}
+
+archaic_segments <- read_tsv("ArchaicAdmixture/ArchaicSegments.txt") %>% 
+  mutate(length = end-start+1000) %>% 
+  filter(length>0)
+
+test_df <- archaic_segments %>% slice_sample(n=10000)
+
+snps <- read_tsv("ArchaicAdmixture/SNPs.txt") %>%  
+    mutate(origin = factor(
+      case_when(
+        archaic %in% c("AltaiNea_nofil","Vi33.19_nofil") ~ "Neanderthal",
+        archaic == "Denisova_nofil" ~ "Denisova",
+        .default = 'human'),
+      levels = c('human', 'Neanderthal', 'Denisova')))
+
+test_snps <- snps %>% slice_sample(n=10000)
+test_snps %>% head() %>% kable
+length(unique(test_snps$start))
+
+```
+
+# 2. How correlated are the archaic contents in (any) two indiviuals
+
+## Calculate admixture proportion based on SNPs
+
+Calculate the correlation of archaic contents between individuals, or visualize to what extent individuals share SNPs:
+
+```{r plot-the-counted-snps-derived-from-each-archaic-ancestry, fig.width=8 }
+
+plot_admix_prop <- snps %>%
+  group_by(name, region, origin) %>%
+  summarize(shared_snps = n()) %>%  
+  ungroup() %>% 
+  group_by(name) %>% 
+  reframe(region,
+          origin, 
+          shared_snps,
+          shared_prop = shared_snps#/sum(shared_snps)
+            ) %>% 
+  arrange(origin) %>% 
+  ggplot(aes(x=reorder(name, shared_snps), y=shared_prop, fill=origin)) +
+  geom_bar(stat='identity', position="fill", width=1) +
+  scale_x_discrete(expand=c(0,0), name = "Individuals") +
+  scale_y_continuous(expand=c(0,0), name = "Shared ancestry") +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+plot_admix_prop
+
+```
+
+```{r save-whole-plot, include=FALSE}
+ggsave(plot = plot_admix_prop, device = 'svg', 
+       path = "graphics/", 
+       filename = "admixture_proportion_whole.svg", width = 6.5, height = 2,
+       dpi=2000)
+```
+
+> I want to know the mean proportions of ancestry in the whole data set
+
+```{r table-mean-admixture-proportions}
+mean_admix <- snps %>%
+  group_by(name, region, origin) %>%
+  summarize(shared_snps = n()) %>%  
+  ungroup() %>% 
+  group_by(name) %>% 
+  reframe(region,
+          origin, 
+          shared_snps,
+          shared_prop = shared_snps/sum(shared_snps)
+          ) %>% 
+  group_by(origin) %>% 
+  summarise(full = mean(shared_prop)) %>% 
+  pivot_longer(cols = 2, names_to="region",values_to = "mean_prop")
+
+mean_admix
+
+mean_admix_by_region <- snps %>%
+  group_by(name, region, origin) %>%
+  summarize(shared_snps = n()) %>%  
+  ungroup() %>% 
+  group_by(name) %>% 
+  reframe(region,
+          origin, 
+          shared_snps,
+          shared_prop = shared_snps/sum(shared_snps)
+          ) %>% 
+  group_by(origin,region) %>% 
+  summarise(mean_prop = mean(shared_prop))
+
+mean_admix <- bind_rows(mean_admix, mean_admix_by_region)
+
+mean_admix %>% pivot_wider(names_from=region, values_from = mean_prop) %>% kable(format = "latex", digits=3)
+
+# I don't know of this is relevant, but here goes ANOVA one way
+aov(mean_prop~region, data=mean_admix_by_region) %>% summary(.)
+aov(mean_prop~region+origin, data=mean_admix_by_region) %>% summary(.)
+
+```
+
+
+```{r plot the counted snps derived from each archaic ancestry per region} 
+
+# Count the number of individuals in each facet group
+facet_counts <- snps %>%
+  group_by(region) %>%
+  summarize(num_individuals = n_distinct(name))
+
+# Make a labelling to be called in facet_wrap
+include_n <- function(name) {
+  number <- facet_counts$num_individuals[facet_counts$region == name]
+  paste0(name, " (", number, ")")
+}
+
+plot_admix_prop_facet <- plot_admix_prop +
+  facet_wrap(~region, scales='free_x', nrow = 1,
+             labeller = as_labeller(include_n)) +
+  theme(panel.spacing.x = unit(1, "mm"))
+plot_admix_prop_facet
+
+```
+
+```{r save-facetted-plot, include=FALSE}
+ggsave(plot = plot_admix_prop_facet, device = 'svg', 
+       path = "graphics/", 
+       filename = "admixture_proportion_byorigin.svg", width = 6.5, height = 2,
+       dpi=2000)
+
+```
+
+
+```{r save the combined plot, fig.height=10}
+
+admix_proportion_combined <- plot_grid(plot_admix_prop, 
+                                       plot_admix_prop_facet +  theme(legend.position = 'none'),
+                                       labels = c('A','B'), nrow = 2)
+admix_proportion_combined
+
+```
+
+```{r save-combined-plot, include=FALSE}
+ggsave(plot = plot_admix_prop_facet, device = 'svg', 
+       path = "graphics/", 
+       filename = "admixture_proportion_byorigin.svg", width = 6.5, height = 2,
+       dpi=2000)
+```
+
+
+```{r count-how-many-times-each-snp-is-shared-in-an-individual}
+
+shared <- snps %>% 
+  filter(origin != "human") %>% 
+  group_by(chrom, start, origin) %>% 
+  summarise(n_shared = n()) %>% 
+  mutate(chrom=factor(chrom, levels=c(1:22,'X')))
+
+head(shared)
+summary(shared$n_shared)
+
+# Make a density plot (not worth showing to anyone, really)
+shared %>% 
+  ggplot(aes(x=n_shared, fill=origin)) +
+  geom_bar(stat='density', position='dodge')
+
+# Prepare for plotting jittered outliers on a boxplot
+shared <- shared %>% 
+  group_by(origin) %>% 
+  mutate(outlier.high = n_shared > quantile(n_shared, .75) + 1.50*IQR(n_shared),
+         outlier.low = n_shared < quantile(n_shared, .25) - 1.50*IQR(n_shared)) %>% 
+  mutate(outlier.color = case_when(outlier.high ~ "firebrick4", 
+                                   outlier.low ~"steelblue"))
+
+# Make a boxplot (also not really worth showing)
+shared %>% 
+  ggplot(aes(x=origin, y=n_shared, fill=origin)) +
+  geom_boxplot(outlier.shape=NA) +
+  geom_jitter(color=shared$outlier.color, width=0.2, alpha=0.2)
+  
+# Calculate the mean shared number of snps across origin
+shared %>% 
+  group_by(origin) %>% 
+  summarise(min = min(n_shared),
+            mean = mean(n_shared),
+            median = median(n_shared),
+            max = max(n_shared),
+            n = n(),
+            prop_singlet = sum(n_shared == 1)/n,
+            prop_dublets = sum(n_shared == 2)/n,
+            prop_triplets= sum(n_shared == 3)/n,
+            prop_above   = sum(!(n_shared %in% c(1,2,3)))/n) %>% 
+  kable(format = 'latex', digits=2)
+```
+
+## Calculate the correlation based on archaic segments
+
+```{r shared-archaic-segments}
+
+archaic_segments %>% 
+  group_by(start, )
+
+```
+
+
+```{r skip-the-rest}
+knit_exit()
+```
+
+
+# 3. Population Comparison
+
+Compare the correlation of archaic contents between individuals from different populations:
+
+```{r}
+
+population_comparison <- archaic_segments %>%
+  # Perform analysis here
+  # ...
+
+# Visualize population comparison results
+population_plot <- ggplot(data = population_comparison, aes(x = ..., y = ..., color = ...)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Population Comparison")
+
+# Print population comparison plot
+print(population_plot)
+
+```
+
+
+# 4. Geographical Region Comparison
+
+Compare the correlation of archaic contents between individuals from different geographical regions:
+
+```{r}
+region_comparison <- archaic_segments %>%
+  # Perform analysis here
+
+# Visualize region comparison results
+region_plot <- ggplot(data = region_comparison, aes(x = ..., y = ..., color = ...)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Geographical Region Comparison")
+
+# Print region comparison plot
+print(region_plot)
+
+```
+
+
+# 5. EPAS1 Gene Analysis
+
+Redo the correlation analysis within a 1Mb window surrounding the EPAS1 gene:
+
+```{r}
+epas1_analysis <- archaic_segments %>%
+  # Perform analysis here
+
+# Visualize EPAS1 analysis results
+epas1_plot <- ggplot(data = epas1_analysis, aes(x = ..., y = ..., color = ...)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "EPAS1 Gene Analysis")
+
+# Print EPAS1 analysis plot
+print(epas1_plot)
+
+```
+
+
+# 6. Total Admixture Calculation
+
+Calculate the total amount of admixture in each non-African individual genome:
+
+```{r}
+admixture_total <- archaic_segments %>%
+  # Perform analysis here
+
+# Visualize total admixture results
+admixture_plot <- ggplot(data = admixture_total, aes(x = ..., y = ..., color = ...)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Total Admixture Calculation")
+
+# Print total admixture plot
+print(admixture_plot)
+
+```
+
+
+# 7. Correlation and Admixture Total Analysis
+
+Investigate correlation between admixture totals and patterns:
+
+```{r}
+
+correlation_admixture_analysis <- archaic_segments %>%
+  # Perform analysis here
+
+# Visualize correlation and admixture total results
+correlation_admixture_plot <- ggplot(data = correlation_admixture_analysis, aes(x = ..., y = ..., color = ...)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Correlation and Admixture Total Analysis")
+
+# Print correlation and admixture total plot
+print(correlation_admixture_plot)
+
+```
+
+
+# 8. Additional Analyses
+
+Perform any additional analyses of your own choice:
+
+```{r}
+additional_analyses <- archaic_segments %>%
+  # Perform analysis here
+
+# Visualize additional analysis results
+additional_plot <- ggplot(data = additional_analyses, aes(x = ..., y = ..., color = ...)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Additional Analyses")
+
+# Print additional analysis plot
+print(additional_plot)
+
+```
+
+
+# 9. Reporting and Visualization
+
+Summarize the findings of each analysis and present results visually through plots, graphs, or maps. Provide interpretations and implications of the findings in relation to the project questions and objectives.
+
+```{r}
+
+```
+
