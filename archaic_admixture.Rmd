@@ -45,7 +45,7 @@ test_segments <- archaic_segments %>% slice_sample(n=10000) %>% mutate(chrom=fac
 # nrow(archaic_segments)
 ```
 
-```{r, include=FALSE}
+```{r, eval=FALSE}
 test_segments %>% filter(name %in% c(individual_1,individual_2)) %>% group_by(chrom, name)
 
 ```

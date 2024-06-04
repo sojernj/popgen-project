@@ -32,8 +32,8 @@ test_segments <- archaic_segments %>% slice_sample(n=10000) %>% mutate(chrom=fac
 # nrow(archaic_segments)
 
 
-## ---- include=FALSE-----------------------------------------------------------
-test_segments %>% filter(name %in% c(individual_1,individual_2)) %>% group_by(chrom, name)
+## ---- eval=FALSE-----------------------------------------------------------
+## test_segments %>% filter(name %in% c(individual_1,individual_2)) %>% group_by(chrom, name)
 
 
 
@@ -119,10 +119,11 @@ find_shared_segments_for_pair <- function(pair) {
 library(future)
 library(furrr)
 
+pairs <- combn(individuals, 2, simplify = TRUE)
 
 plan(cluster)
 t0 <- Sys.time()
-1:ncol(pairs[,1:20]) %>%
+results <- 1:ncol(pairs) %>%
   future_map_dfr(\(i) find_shared_segments_for_pair(pairs[,i]), .progress = TRUE, .options = furrr_options(stdout = TRUE))
 
 t1 <- Sys.time()
@@ -134,7 +135,7 @@ cat("took", t1-t0, "sec")
 # results <- do.call(rbind, results)
 
 # # Write the results to a CSV file
-# write.csv(results, file = "results.csv", row.names = FALSE)
+ write.csv(results, file = "results.csv", row.names = FALSE)
 
 
 
