@@ -28,28 +28,27 @@ archaic_segments <- read_tsv("ArchaicAdmixture/ArchaicSegments.txt") %>%
 
 test_segments <- archaic_segments %>% slice_sample(n=10000) %>% mutate(chrom=factor(chrom, levels= c(1:22, 'X')))
 
-snps <- read_tsv("ArchaicAdmixture/SNPs.txt") %>%  
-    mutate(origin = factor(
-      case_when(
-        archaic %in% c("AltaiNea_nofil","Vi33.19_nofil") ~ "Neanderthal",
-        archaic == "Denisova_nofil" ~ "Denisova",
-        .default = 'human'),
-      levels = c('human', 'Neanderthal', 'Denisova')))
+# snps <- read_tsv("ArchaicAdmixture/SNPs.txt") %>%  
+#     mutate(origin = factor(
+#       case_when(
+#         archaic %in% c("AltaiNea_nofil","Vi33.19_nofil") ~ "Neanderthal",
+#         archaic == "Denisova_nofil" ~ "Denisova",
+#         .default = 'human'),
+#       levels = c('human', 'Neanderthal', 'Denisova')))
 
-test_snps <- snps %>% slice_sample(n=10000)
-test_snps %>% head() %>% kable
-length(unique(test_snps$start))
+# test_snps <- snps %>% slice_sample(n=10000)
+# test_snps %>% head() %>% kable
+# length(unique(test_snps$start))
 
-archaic_snps <- snps %>% filter(archaic != "human") %>% select(-c("archaic"))
-nrow(archaic_snps)
-nrow(archaic_segments)
+# archaic_snps <- snps %>% filter(archaic != "human") %>% select(-c("archaic"))
+# nrow(archaic_snps)
+# nrow(archaic_segments)
 ```
 
-```{r}
+```{r, include=FALSE}
 test_segments %>% filter(name %in% c(individual_1,individual_2)) %>% group_by(chrom, name)
 
 ```
-
 
 
 
@@ -98,18 +97,18 @@ find_shared_segments <- function(individual_1, individual_2, segments_data) {
 }
 
 # Test function 
- find_shared_segments("S_Hungarian-1", "ERS700536", test_segments)
+#  find_shared_segments("S_Hungarian-1", "ERS700536", test_segments)
  
-# Test validity 
-find_shared_segments("ERS700536", "ERS700536", test_segments) %>% 
-    summarise(total=sum(overlap_length))
+# # Test validity 
+# find_shared_segments("ERS700536", "ERS700536", test_segments) %>% 
+#     summarise(total=sum(overlap_length))
 
 
-test_segments %>% filter(name=="ERS700536") %>% summarise(total=sum(length))
+# test_segments %>% filter(name=="ERS700536") %>% summarise(total=sum(length))
 
 ```
 
-```{r use-function}
+```{r use-function, eval=FALSE}
 
 # Example: Calculate shared SNPs between two individuals
 individual_1 <- sample(unique(test_segments$name), size = 1)
@@ -119,7 +118,7 @@ shared_segments
 
 ```
 
-```{r summarise}
+```{r use-the-cluster}
 
 # Get all unique individuals
 individuals <- unique(test_segments$name)
@@ -142,7 +141,7 @@ library(future)
 library(furrr)
 
 
-plan(multisession())
+plan(cluster)
 t0 <- Sys.time()
 1:ncol(pairs[,1:20]) %>%
   future_map_dfr(\(i) find_shared_segments_for_pair(pairs[,i]), .progress = TRUE, .options = furrr_options(stdout = TRUE))
@@ -150,10 +149,14 @@ t0 <- Sys.time()
 t1 <- Sys.time()
 cat("took", t1-t0, "sec")
 
-results <- combn(individuals, 2, FUN = find_shared_segments_for_pair, simplify = FALSE)
+# results <- combn(individuals, 2, FUN = find_shared_segments_for_pair, simplify = FALSE)
 
-# Combine the results into a single data frame
-results <- do.call(rbind, results)
+# # Combine the results into a single data frame
+# results <- do.call(rbind, results)
+
+# # Write the results to a CSV file
+# write.csv(results, file = "results.csv", row.names = FALSE)
+
 ```
 
 
@@ -161,7 +164,7 @@ results <- do.call(rbind, results)
 
 Calculate the correlation of archaic contents between individuals, or visualize to what extent individuals share SNPs:
 
-```{r plot-the-counted-snps-derived-from-each-archaic-ancestry, fig.width=8 }
+```{r plot-the-counted-snps-derived-from-each-archaic-ancestry, fig.width=8 , eval=FALSE}
 
 plot_admix_prop <- snps %>%
   group_by(name, region, origin) %>%
@@ -186,7 +189,7 @@ plot_admix_prop
 
 ```
 
-```{r save-whole-plot, include=FALSE}
+```{r save-whole-plot, eval=FALSE}
 ggsave(plot = plot_admix_prop, device = 'svg', 
        path = "graphics/", 
        filename = "admixture_proportion_whole.svg", width = 6.5, height = 2,
@@ -195,7 +198,7 @@ ggsave(plot = plot_admix_prop, device = 'svg',
 
 > I want to know the mean proportions of ancestry in the whole data set
 
-```{r table-mean-admixture-proportions}
+```{r table-mean-admixture-proportions, eval=FALSE}
 mean_admix <- snps %>%
   group_by(name, region, origin) %>%
   summarize(shared_snps = n()) %>%  
@@ -235,7 +238,7 @@ aov(mean_prop~region+origin, data=mean_admix_by_region) %>% summary(.)
 
 ```
 
-```{r plot the counted snps derived from each archaic ancestry per region}
+```{r plot the counted snps derived from each archaic ancestry per region, eval=FALSE}
 
 # Count the number of individuals in each facet group
 facet_counts <- snps %>%
@@ -256,7 +259,7 @@ plot_admix_prop_facet
 
 ```
 
-```{r save-facetted-plot, include=FALSE}
+```{r save-facetted-plot, eval=FALSE}
 ggsave(plot = plot_admix_prop_facet, device = 'svg', 
        path = "graphics/", 
        filename = "admixture_proportion_byorigin.svg", width = 6.5, height = 2,
@@ -264,7 +267,7 @@ ggsave(plot = plot_admix_prop_facet, device = 'svg',
 
 ```
 
-```{r save the combined plot, fig.height=10}
+```{r save the combined plot, fig.height=10, eval=FALSE}
 
 admix_proportion_combined <- plot_grid(plot_admix_prop, 
                                        plot_admix_prop_facet +  theme(legend.position = 'none'),
@@ -273,14 +276,14 @@ admix_proportion_combined
 
 ```
 
-```{r save-combined-plot, include=FALSE}
+```{r save-combined-plot, eval=FALSE}
 ggsave(plot = plot_admix_prop_facet, device = 'svg', 
        path = "graphics/", 
        filename = "admixture_proportion_byorigin.svg", width = 6.5, height = 2,
        dpi=2000)
 ```
 
-```{r count-how-many-times-each-snp-is-shared-in-an-individual}
+```{r count-how-many-times-each-snp-is-shared-in-an-individual, eval=FALSE}
 
 shared <- snps %>% 
   filter(origin != "human") %>% 
@@ -308,13 +311,13 @@ plot_snp_counts <- shared %>%
 plot_snp_counts
 ```
 
-```{r save-plot-snp-counts}
+```{r save-plot-snp-counts, eval=FALSE}
 ggsave(plot_snp_counts, 
        path = "graphics/", 
        filename = "snp-counts-density-1_150.svg", width = 6.5, height = 2)
 ```
 
-```{r boxplot-snp-counts}
+```{r boxplot-snp-counts, eval=FALSE}
 
 # Prepare for plotting jittered outliers on a boxplot
 shared <- shared %>% 
@@ -348,14 +351,14 @@ shared %>%
 
 
 ### Test: simulate the SNP distribution
-```{r}
+```{r, eval=FALSE}
 rnorm()
 ```
 
 
 ## Calculate the correlation/distribution based on archaic segments
 
-```{r total-archaic-segments}
+```{r total-archaic-segments, eval=FALSE}
 head(archaic_segments)
 mean(archaic_segments$length)
 summary(archaic_segments$length)
@@ -380,7 +383,7 @@ plot_total_seg_ind <- total_seg_ind %>%
 plot_total_seg_ind
 ```
 
-```{r save-total-archaic-segments}
+```{r save-total-archaic-segments, eval=FALSE}
 ggsave(plot_total_seg_ind, path="graphics/", filename="total_segment_distribution.svg", 
        width = 6.5, height = 2)
 
@@ -388,7 +391,7 @@ ggsave(plot_total_seg_ind, path="graphics/", filename="total_segment_distributio
 
 
 
-```{r skip-the-rest}
+```{r skip-the-rest, eval=FALSE}
 knit_exit()
 ```
 
@@ -396,7 +399,7 @@ knit_exit()
 
 Compare the correlation of archaic contents between individuals from different populations:
 
-```{r}
+```{r, eval=FALSE}
 
 population_comparison <- archaic_segments %>%
   # Perform analysis here
@@ -417,7 +420,7 @@ print(population_plot)
 
 Compare the correlation of archaic contents between individuals from different geographical regions:
 
-```{r}
+```{r, eval=FALSE}
 region_comparison <- archaic_segments %>%
   # Perform analysis here
 
@@ -436,7 +439,7 @@ print(region_plot)
 
 Redo the correlation analysis within a 1Mb window surrounding the EPAS1 gene:
 
-```{r}
+```{r, eval=FALSE}
 epas1_analysis <- archaic_segments %>%
   # Perform analysis here
 
@@ -455,7 +458,7 @@ print(epas1_plot)
 
 Calculate the total amount of admixture in each non-African individual genome:
 
-```{r}
+```{r, eval=FALSE}
 admixture_total <- archaic_segments %>%
   # Perform analysis here
 
@@ -474,7 +477,7 @@ print(admixture_plot)
 
 Investigate correlation between admixture totals and patterns:
 
-```{r}
+```{r, eval=FALSE}
 
 correlation_admixture_analysis <- archaic_segments %>%
   # Perform analysis here
@@ -494,7 +497,7 @@ print(correlation_admixture_plot)
 
 Perform any additional analyses of your own choice:
 
-```{r}
+```{r, eval=FALSE}
 additional_analyses <- archaic_segments %>%
   # Perform analysis here
 
@@ -513,6 +516,6 @@ print(additional_plot)
 
 Summarize the findings of each analysis and present results visually through plots, graphs, or maps. Provide interpretations and implications of the findings in relation to the project questions and objectives.
 
-```{r}
+```{r, eval=FALSE}
 
 ```
