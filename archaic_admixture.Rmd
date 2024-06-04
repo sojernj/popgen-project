@@ -20,13 +20,13 @@ theme_set(theme_bw(base_size = 12))
 
 Load and preprocess the data files. We have to recalculate the lengths of the segments (VIP knowledge from Moi)
 
-```{r data-exploration}
+```{r data-initialization}
 
 archaic_segments <- read_tsv("ArchaicAdmixture/ArchaicSegments.txt") %>% 
   mutate(length = end-start+1000) %>% 
   filter(length>0)
 
-test_df <- archaic_segments %>% slice_sample(n=10000)
+test_segments <- archaic_segments %>% slice_sample(n=10000) %>% mutate(chrom=factor(chrom, levels= c(1:22, 'X')))
 
 snps <- read_tsv("ArchaicAdmixture/SNPs.txt") %>%  
     mutate(origin = factor(
@@ -40,9 +40,122 @@ test_snps <- snps %>% slice_sample(n=10000)
 test_snps %>% head() %>% kable
 length(unique(test_snps$start))
 
+archaic_snps <- snps %>% filter(archaic != "human") %>% select(-c("archaic"))
+nrow(archaic_snps)
+nrow(archaic_segments)
 ```
 
+```{r}
+test_segments %>% filter(name %in% c(individual_1,individual_2)) %>% group_by(chrom, name)
+
+```
+
+
+
+
 # 2. How correlated are the archaic contents in (any) two indiviuals
+
+## Try to find shared segments between a pair of individuals
+
+Maybe we can generalize later
+
+```{r function-find-shared-segments}
+
+# Function to find shared segments between two individuals
+find_shared_segments <- function(individual_1, individual_2, segments_data) {
+  
+  df <- segments_data %>% filter(name %in% c(individual_1,individual_2)) %>% select(name, chrom, start, end)
+  df1 <- df %>% filter(name==individual_1)
+  df2 <- df %>% filter(name==individual_2)
+  
+  #cat("Comparing individuals: ", individual_1, ":", individual_2)
+  
+  shared_segments <- data.frame()
+  
+  for (chrom in c(1:22, 'X')) {
+    #cat("Chromosome:", chrom, "\t")
+    
+    df1_chrom <- df1 %>% filter(chrom == !!chrom)
+    df2_chrom <- df2 %>% filter(chrom == !!chrom)
+    
+    overlaps <- fuzzyjoin::interval_inner_join(df1_chrom, df2_chrom, c("start", "end"))
+
+    overlaps <- overlaps %>% mutate(
+      overlap_length = case_when(nrow(overlaps)>0 ~ pmin(end.x, end.y) - pmax(start.x, start.y),
+                                 .default = 0))
+    
+    
+    #cat("--> length:", sum(overlaps$overlap_length), "\n")
+    
+    shared_segments <- rbind(shared_segments, overlaps)
+  }
+  
+  shared_segments <- shared_segments %>% mutate(chrom=chrom.x) %>% select(name.x, name.y, chrom, start.x, start.y, end.x, end.y, overlap_length)
+  
+  #cat("\t total overlap: ", sum(shared_segments$overlap_length), "\n")
+  
+  return(shared_segments )
+}
+
+# Test function 
+ find_shared_segments("S_Hungarian-1", "ERS700536", test_segments)
+ 
+# Test validity 
+find_shared_segments("ERS700536", "ERS700536", test_segments) %>% 
+    summarise(total=sum(overlap_length))
+
+
+test_segments %>% filter(name=="ERS700536") %>% summarise(total=sum(length))
+
+```
+
+```{r use-function}
+
+# Example: Calculate shared SNPs between two individuals
+individual_1 <- sample(unique(test_segments$name), size = 1)
+individual_2 <- sample(unique(test_segments$name), size = 1)
+shared_segments <- find_shared_segments(individual_1, individual_2, test_segments)
+shared_segments
+
+```
+
+```{r summarise}
+
+# Get all unique individuals
+individuals <- unique(test_segments$name)
+
+# Define a function to be applied to each pair
+find_shared_segments_for_pair <- function(pair) {
+  shared_segments <- find_shared_segments(pair[1], pair[2], archaic_segments)
+  
+  # Calculate the total length of overlapping segments
+  total_length <- sum(shared_segments$overlap_length)
+  
+  # Return a data frame with the results
+  return(data.frame(individual_1 = pair[1], 
+                    individual_2 = pair[2], 
+                    total_length = total_length))
+}
+
+# Generate all possible pairs of unique individuals and apply the function
+library(future)
+library(furrr)
+
+
+plan(multisession())
+t0 <- Sys.time()
+1:ncol(pairs[,1:20]) %>%
+  future_map_dfr(\(i) find_shared_segments_for_pair(pairs[,i]), .progress = TRUE, .options = furrr_options(stdout = TRUE))
+
+t1 <- Sys.time()
+cat("took", t1-t0, "sec")
+
+results <- combn(individuals, 2, FUN = find_shared_segments_for_pair, simplify = FALSE)
+
+# Combine the results into a single data frame
+results <- do.call(rbind, results)
+```
+
 
 ## Calculate admixture proportion based on SNPs
 
@@ -122,8 +235,7 @@ aov(mean_prop~region+origin, data=mean_admix_by_region) %>% summary(.)
 
 ```
 
-
-```{r plot the counted snps derived from each archaic ancestry per region} 
+```{r plot the counted snps derived from each archaic ancestry per region}
 
 # Count the number of individuals in each facet group
 facet_counts <- snps %>%
@@ -152,7 +264,6 @@ ggsave(plot = plot_admix_prop_facet, device = 'svg',
 
 ```
 
-
 ```{r save the combined plot, fig.height=10}
 
 admix_proportion_combined <- plot_grid(plot_admix_prop, 
@@ -169,7 +280,6 @@ ggsave(plot = plot_admix_prop_facet, device = 'svg',
        dpi=2000)
 ```
 
-
 ```{r count-how-many-times-each-snp-is-shared-in-an-individual}
 
 shared <- snps %>% 
@@ -179,12 +289,32 @@ shared <- snps %>%
   mutate(chrom=factor(chrom, levels=c(1:22,'X')))
 
 head(shared)
-summary(shared$n_shared)
+summary(shared$n_shared) %>% as.array() %>% as.data.frame() %>% pivot_wider(names_from=Var1, values_from = Freq) %>% kable(format='latex')
 
-# Make a density plot (not worth showing to anyone, really)
-shared %>% 
+# Make a density plot
+plot_snp_counts <- shared %>% 
   ggplot(aes(x=n_shared, fill=origin)) +
-  geom_bar(stat='density', position='dodge')
+  geom_bar(stat='density', position='dodge', width=1, color=NA) +
+  #geom_density(aes(alpha=origin, color=origin)) +
+  #ggtitle("Distribution of shared SNP positions based on inferred origin") +
+  xlab("Number of times a SNP position is repeated") +
+  ylab("Density") +
+  coord_cartesian(xlim=c(1,150)) +
+  theme(legend.position = c(0.7,0.7),
+        legend.margin = margin(.1,.1,.1,.1),
+        legend.box.margin = margin(.1,.1,.1,.1), 
+        legend.background = element_blank()) +
+  NULL
+plot_snp_counts
+```
+
+```{r save-plot-snp-counts}
+ggsave(plot_snp_counts, 
+       path = "graphics/", 
+       filename = "snp-counts-density-1_150.svg", width = 6.5, height = 2)
+```
+
+```{r boxplot-snp-counts}
 
 # Prepare for plotting jittered outliers on a boxplot
 shared <- shared %>% 
@@ -197,8 +327,9 @@ shared <- shared %>%
 # Make a boxplot (also not really worth showing)
 shared %>% 
   ggplot(aes(x=origin, y=n_shared, fill=origin)) +
-  geom_boxplot(outlier.shape=NA) +
-  geom_jitter(color=shared$outlier.color, width=0.2, alpha=0.2)
+  #geom_boxplot(outlier.shape=NA) +
+  #geom_jitter(color=shared$outlier.color, width=0.35, alpha=0.1) +
+  geom_jitter(aes(color=origin), alpha=0.1)
   
 # Calculate the mean shared number of snps across origin
 shared %>% 
@@ -208,27 +339,58 @@ shared %>%
             median = median(n_shared),
             max = max(n_shared),
             n = n(),
-            prop_singlet = sum(n_shared == 1)/n,
-            prop_dublets = sum(n_shared == 2)/n,
-            prop_triplets= sum(n_shared == 3)/n,
-            prop_above   = sum(!(n_shared %in% c(1,2,3)))/n) %>% 
+            sum(n_shared <= 5)/n,
+            sum(n_shared <= 10)/n,
+            sum(n_shared <= 50)/n,
+            prop_above_50   = sum((n_shared > 50))/n) %>% 
   kable(format = 'latex', digits=2)
 ```
 
-## Calculate the correlation based on archaic segments
 
-```{r shared-archaic-segments}
+### Test: simulate the SNP distribution
+```{r}
+rnorm()
+```
 
-archaic_segments %>% 
-  group_by(start, )
+
+## Calculate the correlation/distribution based on archaic segments
+
+```{r total-archaic-segments}
+head(archaic_segments)
+mean(archaic_segments$length)
+summary(archaic_segments$length)
+
+total_seg_ind <- archaic_segments %>% 
+  group_by(name, pop, region) %>% 
+  summarise(total_length = sum(length)) %>% 
+  arrange(region)
+
+summary(total_seg_ind$total_length)
+
+plot_total_seg_ind <- total_seg_ind %>% 
+  ggplot(aes(x=total_length, fill=region)) +
+  geom_histogram(bins=50, color='black', linewidth=0.2) +
+  geom_vline(aes(xintercept = median(total_seg_ind$total_length)), linewidth=.8, color='black') +
+  annotate('text', x=median(total_seg_ind$total_length)*1.2, y=58, label="Median") +
+  xlab("Total length") +
+  ylab("Count") +
+  scale_x_continuous(expand=c(0,0)) +
+  scale_y_continuous(expand=c(0,0)) +
+  coord_cartesian(ylim = c(0,60))
+plot_total_seg_ind
+```
+
+```{r save-total-archaic-segments}
+ggsave(plot_total_seg_ind, path="graphics/", filename="total_segment_distribution.svg", 
+       width = 6.5, height = 2)
 
 ```
+
 
 
 ```{r skip-the-rest}
 knit_exit()
 ```
-
 
 # 3. Population Comparison
 
@@ -251,7 +413,6 @@ print(population_plot)
 
 ```
 
-
 # 4. Geographical Region Comparison
 
 Compare the correlation of archaic contents between individuals from different geographical regions:
@@ -270,7 +431,6 @@ region_plot <- ggplot(data = region_comparison, aes(x = ..., y = ..., color = ..
 print(region_plot)
 
 ```
-
 
 # 5. EPAS1 Gene Analysis
 
@@ -291,7 +451,6 @@ print(epas1_plot)
 
 ```
 
-
 # 6. Total Admixture Calculation
 
 Calculate the total amount of admixture in each non-African individual genome:
@@ -310,7 +469,6 @@ admixture_plot <- ggplot(data = admixture_total, aes(x = ..., y = ..., color = .
 print(admixture_plot)
 
 ```
-
 
 # 7. Correlation and Admixture Total Analysis
 
@@ -332,7 +490,6 @@ print(correlation_admixture_plot)
 
 ```
 
-
 # 8. Additional Analyses
 
 Perform any additional analyses of your own choice:
@@ -352,7 +509,6 @@ print(additional_plot)
 
 ```
 
-
 # 9. Reporting and Visualization
 
 Summarize the findings of each analysis and present results visually through plots, graphs, or maps. Provide interpretations and implications of the findings in relation to the project questions and objectives.
@@ -360,4 +516,3 @@ Summarize the findings of each analysis and present results visually through plo
 ```{r}
 
 ```
-
