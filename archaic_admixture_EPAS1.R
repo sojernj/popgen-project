@@ -40,14 +40,20 @@ test_segments <- archaic_segments %>% slice_sample(n=10000) %>% mutate(chrom=fac
 ## ----function-find-shared-segments--------------------------------------------
 
 # Function to find shared segments between two individuals
-find_shared_segments <- function(individual_1, individual_2, segments_data) {
+find_shared_segments_epas_x <- function(individual_1, individual_2, segments_data) {
   
-  df <- segments_data %>% filter(name %in% c(individual_1,individual_2)) %>% 
+  # filter the data to only include the EPAS1 chromosome and the X chromosome, This gene maps to chr2:46,520,806-46,613,842 in GRCh37 coordinates. investigate  1Mb around the gene
+  df <- segments_data %>% 
+    filter(chrom %in% c('X', 2))
+
+
+  df <- df %>% filter(name %in% c(individual_1,individual_2)) %>% 
     mutate(origin = case_when(
       Shared_with_Altai > Shared_with_Denisova | Shared_with_Vindija > Shared_with_Denisova ~ "Neanderthal",
       Shared_with_Altai < Shared_with_Denisova & Shared_with_Vindija < Shared_with_Denisova ~ "Denisovan",
       Shared_with_Altai + Shared_with_Vindija + Shared_with_Denisova == 0 ~ "Unclassified"
     )) %>% select(name, chrom, start, end, origin)
+    
   df1 <- df %>% filter(name==individual_1)
   df2 <- df %>% filter(name==individual_2)
   
@@ -55,19 +61,36 @@ find_shared_segments <- function(individual_1, individual_2, segments_data) {
   
   shared_segments <- data.frame()
   
-  for (chrom in c(1:22, 'X')) {
-    #cat("Chromosome:", chrom, "\t")
-    
+  for (chrom in c(2, 'X')) {
+
     df1_chrom <- df1 %>% filter(chrom == !!chrom)
     df2_chrom <- df2 %>% filter(chrom == !!chrom)
     
-    overlaps <- fuzzyjoin::interval_inner_join(df1_chrom, df2_chrom, c("start", "end")) %>% 
+    if (chrom == '2') {
+      
+      epas1_1 <- df1_chrom %>% filter(start >= 46520806-500000 & end <= 46613842+500000)
+      epas1_2 <- df2_chrom %>% filter(start >= 46520806-500000 & end <= 46613842+500000)
+
+      overlaps <- fuzzyjoin::interval_inner_join(epas1_1, epas1_2, c("start", "end")) %>%
+        filter((origin.x == origin.y) & (origin.x %in% c("Neanderthal", "Denisova")))
+
+      overlaps <- overlaps %>% mutate(
+        overlap_length = case_when(nrow(overlaps)>0 ~ pmin(end.x, end.y) - pmax(start.x, start.y),
+                                   .default = 0))
+
+    } else {
+      
+      overlaps <- fuzzyjoin::interval_inner_join(df1_chrom, df2_chrom, c("start", "end")) %>% 
       filter((origin.x == origin.y) & (origin.x %in% c("Neanderthal", "Denisova")))
-    print(overlaps)
     
-    overlaps <- overlaps %>% mutate(
+      overlaps <- overlaps %>% mutate(
       overlap_length = case_when(nrow(overlaps)>0 ~ pmin(end.x, end.y) - pmax(start.x, start.y),
                                  .default = 0))
+      
+    }
+    
+    
+
     
     
     #cat("--> length:", sum(overlaps$overlap_length), "\n")
@@ -110,16 +133,19 @@ cat("Starting the multiprocessing\n")
 individuals <- unique(test_segments$name)
 
 # Define a function to be applied to each pair
-find_shared_segments_for_pair <- function(pair) {
-  shared_segments <- find_shared_segments(pair[1], pair[2], archaic_segments)
+find_shared_segments_for_pair_epas_x <- function(pair) {
+  shared_segments <- find_shared_segments_epas_x(pair[1], pair[2], archaic_segments)
   
   # Calculate the total length of overlapping segments
   total_length <- sum(shared_segments$overlap_length)
+  shared_x <- shared_segments %>% filter(chrom == "X") %>% summarise(total=sum(overlap_length))
+  shared_epas <- shared_segments %>% filter(chrom == "2") %>% summarise(total=sum(overlap_length))
   
   # Return a data frame with the results
   return(data.frame(individual_1 = pair[1], 
                     individual_2 = pair[2], 
-                    total_length = total_length))
+                    shared_x = shared_x$total,
+                    shared_epas = shared_epas$total))
 }
 
 # Generate all possible pairs of unique individuals and apply the function
@@ -129,11 +155,9 @@ library(furrr)
 pairs <- combn(individuals, 2, simplify = TRUE)
 
 plan(cluster)
-t0 <- Sys.time()
 results <- 1:ncol(pairs) %>%
-  future_map_dfr(\(i) find_shared_segments_for_pair(pairs[,i]), .progress = TRUE, .options = furrr_options(stdout = TRUE))
+  future_map_dfr(\(i) find_shared_segments_for_pair_epas_x(pairs[,i]), .progress = TRUE, .options = furrr_options(stdout = TRUE))
 
-t1 <- Sys.time()
 # cat("took", t1-t0, "sec")
 
 # results <- combn(individuals, 2, FUN = find_shared_segments_for_pair, simplify = FALSE)
@@ -142,7 +166,7 @@ t1 <- Sys.time()
 # results <- do.call(rbind, results)
 
 # # Write the results to a CSV file
- write.csv(results, file = "results_diff.csv", row.names = FALSE)
+ write.csv(results, file = "results_epas_x.csv", row.names = FALSE)
 
 
 

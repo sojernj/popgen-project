@@ -63,7 +63,6 @@ find_shared_segments <- function(individual_1, individual_2, segments_data) {
     
     overlaps <- fuzzyjoin::interval_inner_join(df1_chrom, df2_chrom, c("start", "end")) %>% 
       filter((origin.x == origin.y) & (origin.x %in% c("Neanderthal", "Denisova")))
-    print(overlaps)
     
     overlaps <- overlaps %>% mutate(
       overlap_length = case_when(nrow(overlaps)>0 ~ pmin(end.x, end.y) - pmax(start.x, start.y),
