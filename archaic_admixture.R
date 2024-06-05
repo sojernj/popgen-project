@@ -42,7 +42,12 @@ test_segments <- archaic_segments %>% slice_sample(n=10000) %>% mutate(chrom=fac
 # Function to find shared segments between two individuals
 find_shared_segments <- function(individual_1, individual_2, segments_data) {
   
-  df <- segments_data %>% filter(name %in% c(individual_1,individual_2)) %>% select(name, chrom, start, end)
+  df <- segments_data %>% filter(name %in% c(individual_1,individual_2)) %>% 
+    mutate(origin = case_when(
+      Shared_with_Altai > Shared_with_Denisova | Shared_with_Vindija > Shared_with_Denisova ~ "Neanderthal",
+      Shared_with_Altai < Shared_with_Denisova & Shared_with_Vindija < Shared_with_Denisova ~ "Denisovan",
+      Shared_with_Altai + Shared_with_Vindija + Shared_with_Denisova == 0 ~ "Unclassified"
+    )) %>% select(name, chrom, start, end, origin)
   df1 <- df %>% filter(name==individual_1)
   df2 <- df %>% filter(name==individual_2)
   
@@ -56,8 +61,10 @@ find_shared_segments <- function(individual_1, individual_2, segments_data) {
     df1_chrom <- df1 %>% filter(chrom == !!chrom)
     df2_chrom <- df2 %>% filter(chrom == !!chrom)
     
-    overlaps <- fuzzyjoin::interval_inner_join(df1_chrom, df2_chrom, c("start", "end"))
-
+    overlaps <- fuzzyjoin::interval_inner_join(df1_chrom, df2_chrom, c("start", "end")) %>% 
+      filter((origin.x == origin.y) & (origin.x %in% c("Neanderthal", "Denisova")))
+    print(overlaps)
+    
     overlaps <- overlaps %>% mutate(
       overlap_length = case_when(nrow(overlaps)>0 ~ pmin(end.x, end.y) - pmax(start.x, start.y),
                                  .default = 0))
@@ -68,7 +75,7 @@ find_shared_segments <- function(individual_1, individual_2, segments_data) {
     shared_segments <- rbind(shared_segments, overlaps)
   }
   
-  shared_segments <- shared_segments %>% mutate(chrom=chrom.x) %>% select(name.x, name.y, chrom, start.x, start.y, end.x, end.y, overlap_length)
+  shared_segments <- shared_segments %>% mutate(chrom=chrom.x, origin=origin.x) %>% select(name.x, name.y, chrom, start.x, start.y, end.x, end.y, origin, overlap_length)
   
   #cat("\t total overlap: ", sum(shared_segments$overlap_length), "\n")
   

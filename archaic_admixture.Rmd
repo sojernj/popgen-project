@@ -46,7 +46,7 @@ test_segments <- archaic_segments %>% slice_sample(n=10000) %>% mutate(chrom=fac
 ```
 
 ```{r, eval=FALSE}
-test_segments %>% filter(name %in% c(individual_1,individual_2)) %>% group_by(chrom, name)
+#test_segments %>% filter(name %in% c(individual_1,individual_2)) %>% group_by(chrom, name)
 
 ```
 
@@ -63,7 +63,12 @@ Maybe we can generalize later
 # Function to find shared segments between two individuals
 find_shared_segments <- function(individual_1, individual_2, segments_data) {
   
-  df <- segments_data %>% filter(name %in% c(individual_1,individual_2)) %>% select(name, chrom, start, end)
+  df <- segments_data %>% filter(name %in% c(individual_1,individual_2)) %>% 
+    mutate(origin = case_when(
+        Shared_with_Altai > Shared_with_Denisova | Shared_with_Vindija > Shared_with_Denisova ~ "Neanderthal",
+        Shared_with_Altai < Shared_with_Denisova & Shared_with_Vindija < Shared_with_Denisova ~ "Denisovan",
+        Shared_with_Altai + Shared_with_Vindija + Shared_with_Denisova == 0 ~ "Unclassified"
+    )) %>% select(name, chrom, start, end, origin)
   df1 <- df %>% filter(name==individual_1)
   df2 <- df %>% filter(name==individual_2)
   
@@ -77,7 +82,9 @@ find_shared_segments <- function(individual_1, individual_2, segments_data) {
     df1_chrom <- df1 %>% filter(chrom == !!chrom)
     df2_chrom <- df2 %>% filter(chrom == !!chrom)
     
-    overlaps <- fuzzyjoin::interval_inner_join(df1_chrom, df2_chrom, c("start", "end"))
+    overlaps <- fuzzyjoin::interval_inner_join(df1_chrom, df2_chrom, c("start", "end")) %>% 
+      filter((origin.x == origin.y) & (origin.x %in% c("Neanderthal", "Denisova")))
+    print(overlaps)
 
     overlaps <- overlaps %>% mutate(
       overlap_length = case_when(nrow(overlaps)>0 ~ pmin(end.x, end.y) - pmax(start.x, start.y),
@@ -89,7 +96,7 @@ find_shared_segments <- function(individual_1, individual_2, segments_data) {
     shared_segments <- rbind(shared_segments, overlaps)
   }
   
-  shared_segments <- shared_segments %>% mutate(chrom=chrom.x) %>% select(name.x, name.y, chrom, start.x, start.y, end.x, end.y, overlap_length)
+  shared_segments <- shared_segments %>% mutate(chrom=chrom.x, origin=origin.x) %>% select(name.x, name.y, chrom, start.x, start.y, end.x, end.y, origin, overlap_length)
   
   #cat("\t total overlap: ", sum(shared_segments$overlap_length), "\n")
   
@@ -97,7 +104,7 @@ find_shared_segments <- function(individual_1, individual_2, segments_data) {
 }
 
 # Test function 
-#  find_shared_segments("S_Hungarian-1", "ERS700536", test_segments)
+  find_shared_segments("S_Hungarian-1", "ERS700536", archaic_segments)
  
 # # Test validity 
 # find_shared_segments("ERS700536", "ERS700536", test_segments) %>% 
@@ -118,7 +125,7 @@ shared_segments
 
 ```
 
-```{r use-the-cluster}
+```{r use-the-cluster, eval=FALSE}
 
 # Get all unique individuals
 individuals <- unique(test_segments$name)
@@ -158,6 +165,120 @@ cat("took", t1-t0, "sec")
 # write.csv(results, file = "results.csv", row.names = FALSE)
 
 ```
+
+```{r get-the-overlaps-computed-on-cluster}
+
+pairwise_overlap <- read_csv("results.csv")
+
+archaic_individuals <- archaic_segments %>% 
+  distinct(name, .keep_all = TRUE) %>% 
+  select(name, pop, country, region)
+
+pairwise_overlap <- pairwise_overlap %>%
+  left_join(archaic_individuals, by = c("individual_1" = "name")) %>%
+  rename(pop_1 = pop, country_1 = country, region_1 = region) %>% 
+  left_join(archaic_individuals, by = c("individual_2" = "name")) %>%
+  rename(pop_2 = pop, country_2 = country, region_2 = region)
+  
+pairwise_overlap <- pairwise_overlap %>% 
+ mutate(individual_1=factor(individual_1),
+        individual_2=factor(individual_2))
+
+```
+
+```{r make-the-heatmap}
+reversed <- pairwise_overlap %>%
+  select(c(2,1), everything()) %>% 
+  rename(individual_2=individual_1, individual_1=individual_2) %>% 
+  arrange(individual_1)
+
+pairwise_overlap <- bind_rows(pairwise_overlap, reversed)
+
+label_x <- pairwise_overlap %>% 
+  group_by(region_1) %>% 
+  summarise(n=n()) %>% 
+  mutate(cumm = cumsum(n))
+
+
+heatmap_plot <- pairwise_overlap %>% 
+  arrange(region_1) %>% 
+  ggplot(aes(x=individual_1, y=individual_2, fill=total_length)) +
+  geom_tile() +
+  scale_fill_gradient(low="white", high="red") +
+  theme(#axis.text.x = element_text(size=6), #element_text(angle = 90, size=5),
+        axis.text.y = element_blank(), #element_text(size=5),
+        ) +
+  scale_x_discrete(breaks=label_x$cumm, labels=label_x$region_1)
+heatmap_plot
+
+```
+
+```{r try-using-complex-heatmap}
+
+library(ComplexHeatmap)
+library(circlize)
+
+cols <- RColorBrewer::brewer.pal(length(unique(pairwise_overlap$region_1)), "RdYlGn")
+
+individual_order <- archaic_individuals %>% arrange(factor(region))
+
+compmap_df <- pairwise_overlap %>%
+  arrange(region_1) %>% 
+  select(c(1:3)) %>% 
+  pivot_wider(names_from = individual_2, values_from = total_length, values_fill = 0) %>%
+  column_to_rownames("individual_1") %>% 
+  as.matrix()
+
+unique(pairwise_overlap$region_1)
+
+column_clusters <- pairwise_overlap %>% distinct(individual_1, .keep_all = TRUE) %>% 
+  select(individual_1,region_1) %>% as.data.frame()
+
+row_clusters <- pairwise_overlap %>% distinct(individual_2, .keep_all = TRUE) %>% 
+  select(individual_2,region_2) %>% as.data.frame()
+
+bottom_annotation <- HeatmapAnnotation(foo = anno_block(
+  gp = gpar(fill = cols),
+  labels = factor(unique(column_clusters$region_1)), 
+  labels_gp = gpar(col = "black", fontsize = 10)
+))
+
+left_annotation <- rowAnnotation(bar = anno_block(
+  gp = gpar(fill = cols),
+  labels = factor(unique(row_clusters$region_2)), 
+  labels_gp = gpar(col = "black", fontsize = 10)
+))
+
+compmap <- Heatmap(compmap_df, name = "Total overlap",
+                   show_column_dend = FALSE, show_row_dend = FLASE,
+                   show_column_names = FALSE, show_row_names = FALSE,
+                   row_order = individual_order$name,
+                   column_order = individual_order$name
+                   #bottom_annotation = bottom_annotation,
+                   #left_annotation = left_annotation
+                   )
+
+
+# Do something a bit unheard of
+test <- individual_order %>% group_by(region) %>% summarise(n=n())
+annot <- c(rep(".", (test$n[1]-1)%/%2), test$region[1], rep(".", (test$n[1]-1)%/%2),
+           rep(".", (test$n[2]-1)%/%2), test$region[2], rep(".", (test$n[2])%/%2),
+           rep(".", (test$n[3])%/%2), test$region[3], rep(".", (test$n[3])%/%2),
+           rep(".", (test$n[4])%/%2), test$region[4], rep(".", (test$n[4])%/%2),
+           rep(".", (test$n[5])%/%2), test$region[5], rep(".", (test$n[5])%/%2))
+
+compmap
+```
+
+
+```{r try-using-pheatmap}
+
+
+```
+
+```{r chatty}
+```
+
 
 
 ## Calculate admixture proportion based on SNPs
