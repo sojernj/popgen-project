@@ -168,11 +168,14 @@ cat("took", t1-t0, "sec")
 
 ```{r get-the-overlaps-computed-on-cluster}
 
-pairwise_overlap <- read_csv("results.csv")
+pairwise_overlap <- read_csv("results_epas_x.csv")
 
 archaic_individuals <- archaic_segments %>% 
+  group_by(name) %>% 
+  mutate(total_archaic = sum(length)) %>% 
+  ungroup %>% 
   distinct(name, .keep_all = TRUE) %>% 
-  select(name, pop, country, region)
+  select(name, pop, country, region, total_archaic)
 
 pairwise_overlap <- pairwise_overlap %>%
   left_join(archaic_individuals, by = c("individual_1" = "name")) %>%
@@ -220,12 +223,12 @@ library(circlize)
 
 cols <- RColorBrewer::brewer.pal(length(unique(pairwise_overlap$region_1)), "RdYlGn")
 
-individual_order <- archaic_individuals %>% arrange(factor(region))
+individual_order <- archaic_individuals %>% arrange(factor(region), factor(pop))
 
 compmap_df <- pairwise_overlap %>%
   arrange(region_1) %>% 
-  select(c(1:3)) %>% 
-  pivot_wider(names_from = individual_2, values_from = total_length, values_fill = 0) %>%
+  select(c(1,2,3)) %>% 
+  pivot_wider(names_from = individual_2, values_from = shared_x, values_fill = NA) %>%
   column_to_rownames("individual_1") %>% 
   as.matrix()
 
@@ -248,35 +251,63 @@ left_annotation <- rowAnnotation(bar = anno_block(
   labels = factor(unique(row_clusters$region_2)), 
   labels_gp = gpar(col = "black", fontsize = 10)
 ))
-
+  
 compmap <- Heatmap(compmap_df, name = "Total overlap",
-                   show_column_dend = FALSE, show_row_dend = FLASE,
+                   show_column_dend = TRUE, show_row_dend = FALSE,
                    show_column_names = FALSE, show_row_names = FALSE,
                    row_order = individual_order$name,
                    column_order = individual_order$name
                    #bottom_annotation = bottom_annotation,
                    #left_annotation = left_annotation
                    )
-
-
-# Do something a bit unheard of
-test <- individual_order %>% group_by(region) %>% summarise(n=n())
-annot <- c(rep(".", (test$n[1]-1)%/%2), test$region[1], rep(".", (test$n[1]-1)%/%2),
-           rep(".", (test$n[2]-1)%/%2), test$region[2], rep(".", (test$n[2])%/%2),
-           rep(".", (test$n[3])%/%2), test$region[3], rep(".", (test$n[3])%/%2),
-           rep(".", (test$n[4])%/%2), test$region[4], rep(".", (test$n[4])%/%2),
-           rep(".", (test$n[5])%/%2), test$region[5], rep(".", (test$n[5])%/%2))
-
 compmap
-```
-
-
-```{r try-using-pheatmap}
-
 
 ```
 
-```{r chatty}
+
+```{r do-some-summary-statistics-on-correlation}
+
+overlap_pair_df <- read_csv("results_diff.csv")
+
+overlap_pair_df <- overlap_pair_df %>%
+  left_join(archaic_individuals, by = c("individual_1" = "name")) %>%
+  rename(pop_1 = pop, country_1 = country, region_1 = region) %>% 
+  left_join(archaic_individuals, by = c("individual_2" = "name")) %>%
+  rename(pop_2 = pop, country_2 = country, region_2 = region)
+
+overlap_pair_df %>% group_by(region_1, region_2) %>% 
+  summarise(mean=mean(2*total_length/(total_archaic.x+total_archaic.y))) %>% 
+  ungroup() %>% 
+  ggplot(aes(x=region_1, y=mean)) +
+  geom_col(position="dodge") +
+  facet_wrap(~region_2, nrow=1) +
+  theme(
+    axis.text.x = element_text(angle = 90)
+  )
+
+# Calculate the mean proportion of overlap between regions
+overlap_pair_df %>% group_by(region_1, region_2) %>% 
+  summarise(mean=mean(2*total_length/(total_archaic.x+total_archaic.y))) %>% 
+  ungroup() %>% 
+  ggplot(aes(x=region_1, y=region_2, fill=mean)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue",
+                       mid = "white",
+                       high = "red") +
+  theme(axis.text.x = element_text(angle=90, hjust = 1, vjust=0))
+
+# Calculate the mean proportion of overlap between populations
+overlap_pair_df %>% group_by(pop_1, pop_2) %>% 
+  summarise(mean=mean(2*total_length/(total_archaic.x+total_archaic.y))) %>% 
+  ungroup() %>% 
+  arrange(pop_1) %>% 
+  ggplot(aes(x=pop_1, y=pop_2, fill=mean)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue",
+                       mid = "white",
+                       high = "red") +
+  theme(axis.text.x = element_text(angle=90, hjust = 1, vjust=0))
+
 ```
 
 
